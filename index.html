@@ -1,33 +1,209 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>下関マップ</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<style>body{margin:0;font-family:sans-serif}h1{margin:16px;font-size:1.4rem}#map{height:calc(100vh - 70px)}</style>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+  header {
+    height: 56px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    background-color: #ffffff;
+    border-bottom: 1px solid #e0e0e0;
+    z-index: 10;
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+  #container {
+    display: flex;
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  #map {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* 情報パネル共通 */
+  #info-panel {
+    background: #ffffff;
+    box-shadow: 0 0 12px rgba(0,0,0,0.15);
+    z-index: 1000;
+    transition: transform 0.3s ease-in-out;
+    display: flex;
+    flex-direction: column;
+  }
+  #info-panel.hidden {
+    display: none;
+  }
+  .panel-header {
+    padding: 12px 16px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .panel-title {
+    font-size: 1rem;
+    font-weight: bold;
+    margin: 0;
+  }
+  .close-btn {
+    border: none;
+    background: transparent;
+    font-size: 1.2rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px 8px;
+  }
+  .panel-body {
+    padding: 16px;
+    overflow-y: auto;
+    font-size: 0.95rem;
+    line-height: 1.6;
+  }
+  .panel-body .category {
+    display: inline-block;
+    background: #e3f2fd;
+    color: #1565c0;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    margin-bottom: 8px;
+  }
+  .panel-body .address {
+    color: #555;
+    font-size: 0.85rem;
+    margin-bottom: 12px;
+  }
+
+  /* PC向け（サイドパネル） */
+  @media (min-width: 769px) {
+    #info-panel {
+      width: 320px;
+      height: 100%;
+      border-left: 1px solid #ddd;
+    }
+  }
+
+  /* モバイル向け（ボトムシート） */
+  @media (max-width: 768px) {
+    #info-panel {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      max-height: 45%;
+      border-top: 1px solid #ddd;
+      border-radius: 12px 12px 0 0;
+    }
+  }
+</style>
 </head>
 <body>
-<h1>下関マップ</h1><div id="map"></div>
-<script>
-const map=L.map('map').setView([33.95,131.25],13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
- attribution:'&copy; OpenStreetMap contributors'
-}).addTo(map);
 
-fetch('./mapdata.geojson').then(r=>r.json()).then(data=>{
- const layer=L.geoJSON(data,{
-  onEachFeature:(feature,marker)=>{
-   const p=feature.properties||{};
-   const lines=[];
-   if(p.name) lines.push(`<strong>${p.name}</strong>`);
-   if(p.category) lines.push(`カテゴリー：${p.category}`);
-   if(p.address) lines.push(`住所：${p.address}`);
-   if(p.description) lines.push(p.description);
-   marker.bindPopup(lines.join('<br>'));
-  }
- }).addTo(map);
- if(layer.getBounds().isValid()) map.fitBounds(layer.getBounds(),{padding:[20,20]});
+<header>
+  <h1>下関マップ</h1>
+</header>
+
+<div id="container">
+  <div id="map"></div>
+  <div id="info-panel" class="hidden">
+    <div class="panel-header">
+      <span class="panel-title" id="panel-title">施設情報</span>
+      <button class="close-btn" id="close-panel" aria-label="閉じる">&times;</button>
+    </div>
+    <div class="panel-body" id="panel-content"></div>
+  </div>
+</div>
+
+<script>
+// 1. タイルレイヤーの定義
+const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>'
 });
+
+const gsiStdLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
+});
+
+const gsiPhotoLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
+  attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
+});
+
+// 2. 地図の初期化（唐戸中心・下関全域表示）
+const map = L.map('map', {
+  center: [33.957, 130.946],
+  zoom: 10,
+  layers: [osmLayer]
+});
+
+// 3. レイヤー切り替えコントロールの追加
+const baseMaps = {
+  "OpenStreetMap": osmLayer,
+  "地理院地図 (標準)": gsiStdLayer,
+  "地理院地図 (写真)": gsiPhotoLayer
+};
+L.control.layers(baseMaps).addTo(map);
+
+// 4. 情報パネル制御
+const panel = document.getElementById('info-panel');
+const panelTitle = document.getElementById('panel-title');
+const panelContent = document.getElementById('panel-content');
+const closeBtn = document.getElementById('close-panel');
+
+closeBtn.addEventListener('click', () => {
+  panel.classList.add('hidden');
+});
+
+// 5. GeoJSONデータの読み込みとイベント割り当て
+fetch('./mapdata.geojson')
+  .then(res => res.json())
+  .then(data => {
+    L.geoJSON(data, {
+      onEachFeature: (feature, layer) => {
+        layer.on('click', () => {
+          const p = feature.properties || {};
+          panelTitle.textContent = p.name || '名称不明';
+          
+          let html = '';
+          if (p.category) {
+            html += `<span class="category">${p.category}</span>`;
+          }
+          if (p.address) {
+            html += `<div class="address">住所: ${p.address}</div>`;
+          }
+          if (p.description) {
+            html += `<div>${p.description}</div>`;
+          }
+          panelContent.innerHTML = html;
+          panel.classList.remove('hidden');
+        });
+      }
+    }).addTo(map);
+  })
+  .catch(err => {
+    console.error('GeoJSONデータの読み込みに失敗しました:', err);
+  });
 </script>
-</body></html>
+</body>
+</html>
