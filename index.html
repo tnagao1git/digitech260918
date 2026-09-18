@@ -169,10 +169,8 @@ const gsiPhotoLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamless
   attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
 });
 
-// 2. 地図初期化（唐戸中心・下関全域表示）
+// 2. 地図初期化
 const map = L.map('map', {
-  center: [33.957, 130.946],
-  zoom: 10,
   layers: [osmLayer]
 });
 
@@ -206,14 +204,12 @@ function escapeHtml(str) {
   }[tag] || tag));
 }
 
-// 6. 属性値の最適化フォーマット
+// 6. 属性値のフォーマット
 function formatFacilityValue(key, val) {
-  if (val === null || val === undefined || val === '') return null; // 未定義・nullは除外判定用にnull返却
+  if (val === null || val === undefined || val === '') return null;
 
-  // 電話番号の場合（市外局番083の補完とtelリンク化）
   if (key === '電話番号') {
     const rawTel = String(val).trim();
-    // 複数番号併記（例: 227-2870/242-2021）対応
     const telNumbers = rawTel.split('/');
     return telNumbers.map(t => {
       const clean = t.trim();
@@ -222,7 +218,6 @@ function formatFacilityValue(key, val) {
     }).join(' / ');
   }
 
-  // 定員（人単位）
   if (key === '定員' && typeof val === 'number') {
     return `${val} 名`;
   }
@@ -230,11 +225,11 @@ function formatFacilityValue(key, val) {
   return escapeHtml(String(val));
 }
 
-// 7. GeoJSONの読み込みとプロパティ全展開
+// 7. GeoJSON読み込みと表示範囲の自動フィッティング
 fetch('./mapdata.geojson')
   .then(res => res.json())
   .then(data => {
-    L.geoJSON(data, {
+    const geoJsonLayer = L.geoJSON(data, {
       onEachFeature: (feature, layer) => {
         layer.on('click', () => {
           const props = feature.properties || {};
@@ -244,11 +239,9 @@ fetch('./mapdata.geojson')
           let rows = '';
 
           for (const [key, value] of entries) {
-            // タイトルに使用した name は重複するため表からはスキップ
             if (key === 'name') continue;
 
             const formatted = formatFacilityValue(key, value);
-            // null（戸数がnullなど）の項目は表を圧迫しないよう除外
             if (formatted === null) continue;
 
             rows += `
@@ -269,6 +262,13 @@ fetch('./mapdata.geojson')
         });
       }
     }).addTo(map);
+
+    // 下関市域全域（南端の彦島から北端の神田・角島方面まで）を画面いっぱいに収める
+    if (geoJsonLayer.getBounds().isValid()) {
+      map.fitBounds(geoJsonLayer.getBounds(), {
+        padding: [20, 20]
+      });
+    }
   })
   .catch(err => {
     console.error('GeoJSONデータの読み込みに失敗しました:', err);
